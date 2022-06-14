@@ -739,6 +739,7 @@ from .karaoketv import KaraoketvIE
 from .karrierevideos import KarriereVideosIE
 from .keezmovies import KeezMoviesIE
 from .kelbyone import KelbyOneIE
+from .kenh14 import Kenh14IE
 from .ketnet import KetnetIE
 from .khanacademy import (
     KhanAcademyIE,
