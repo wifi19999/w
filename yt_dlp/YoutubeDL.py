@@ -1081,14 +1081,13 @@ class YoutubeDL:
         info_dict.setdefault('epoch', int(time.time()))  # keep epoch consistent once set
 
         info_dict = self._copy_infodict(info_dict)
-        info_dict['duration_string'] = (  # %(duration>%H-%M-%S)s is wrong if duration > 24hrs
-            formatSeconds(info_dict['duration'], '-' if sanitize else ':')
-            if info_dict.get('duration', None) is not None
-            else None)
         info_dict['autonumber'] = int(self.params.get('autonumber_start', 1) - 1 + self._num_downloads)
         info_dict['video_autonumber'] = self._num_videos
         if info_dict.get('resolution') is None:
             info_dict['resolution'] = self.format_resolution(info_dict, default=None)
+        duration = float_or_none(info_dict.get('duration'))  # It may not be sanitized when run from test runner
+        if duration:  # %(duration>%H-%M-%S)s is wrong if duration > 24hrs
+            info_dict['duration_string'] = formatSeconds(duration, '-' if sanitize else ':')
 
         # For fields playlist_index, playlist_autonumber and autonumber convert all occurrences
         # of %(field)s to %(field)0Nd for backward compatibility
@@ -1456,10 +1455,13 @@ class YoutubeDL:
                 break
         return wrapper
 
+    def _should_wait_for_video(self, ie_result):
+        return (self.params.get('wait_for_video')
+                and ie_result.get('_type', 'video') == 'video'
+                and not ie_result.get('formats') and not ie_result.get('url'))
+
     def _wait_for_video(self, ie_result):
-        if (not self.params.get('wait_for_video')
-                or ie_result.get('_type', 'video') != 'video'
-                or ie_result.get('formats') or ie_result.get('url')):
+        if not self._should_wait_for_video(ie_result):
             return
 
         format_dur = lambda dur: '%02d:%02d:%02d' % timetuple_from_msec(dur * 1000)[:-1]
@@ -1495,6 +1497,8 @@ class YoutubeDL:
                 progress(f'[wait] Remaining time until next attempt: {self._format_screen(format_dur(diff), self.Styles.EMPHASIS)}')
                 time.sleep(1)
         except KeyboardInterrupt:
+            # TODO: Make interrupts eventually terminate yt-dlp if the extractor finishes too quickly
+            time.sleep(min(0.2, diff))
             progress('')
             raise ReExtractInfo('[wait] Interrupted by user', expected=True)
         except BaseException as e:
@@ -1751,7 +1755,7 @@ class YoutubeDL:
                 resolved_entries.append((playlist_index, entry))
 
             # TODO: Add auto-generated fields
-            if not entry or self._match_entry(entry, incomplete=True) is not None:
+            if not entry:
                 continue
 
             self.to_screen('[download] Downloading video %s of %s' % (
@@ -1802,6 +1806,9 @@ class YoutubeDL:
 
     @_handle_extraction_exceptions
     def __process_iterable_entry(self, entry, download, extra_info):
+        if self._should_wait_for_video(entry) and callable(entry.get('reextractor')):
+            entry = entry['reextractor']()
+            self._wait_for_video(entry)
         return self.process_ie_result(
             entry, download=download, extra_info=extra_info)
 
