@@ -595,7 +595,7 @@ class TwitchVodIE(TwitchBaseIE):
             'live_chat': [  # subtitle tag
                 {
                     'data': json.dumps(chat_history),
-                    'ext': 'json'
+                    'ext': 'twitch-gql-20221228.json'
                 }
             ]
         }
