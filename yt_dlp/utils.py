@@ -3878,6 +3878,8 @@ def _match_one(filter_part, dct, incomplete):
         if m['quote']:
             comparison_value = comparison_value.replace(r'\%s' % m['quote'], m['quote'])
         actual_value = dct.get(m['key'])
+        if comparison_value in dct:
+            comparison_value = dct.get(comparison_value)
         numeric_comparison = None
         if isinstance(actual_value, (int, float)):
             # If the original field is a string and matching comparisonvalue is
