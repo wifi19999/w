@@ -14,7 +14,6 @@ import random
 import re
 import shutil
 import string
-import subprocess
 import sys
 import tempfile
 import time
@@ -31,7 +30,7 @@ from .downloader.rtmp import rtmpdump_version
 from .extractor import gen_extractor_classes, get_info_extractor
 from .extractor.common import UnsupportedURLIE
 from .extractor.openload import PhantomJSwrapper
-from .minicurses import format_text
+from .output.logger import _Logger, _Styles
 from .plugins import directories as plugin_directories
 from .postprocessor import _PLUGIN_CLASSES as plugin_pps
 from .postprocessor import (
@@ -74,11 +73,9 @@ from .utils import (
     ISO3166Utils,
     LazyList,
     MaxDownloadsReached,
-    Namespace,
     PagedList,
     PerRequestProxyHandler,
     PlaylistEntries,
-    Popen,
     PostProcessingError,
     ReExtractInfo,
     RejectedVideoReached,
@@ -92,7 +89,6 @@ from .utils import (
     args_to_str,
     bug_reports_message,
     date_from_str,
-    deprecation_warning,
     determine_ext,
     determine_protocol,
     encode_compat_str,
@@ -145,7 +141,6 @@ from .utils import (
     url_basename,
     variadic,
     version_tuple,
-    windows_enable_vt_mode,
     write_json_file,
     write_string,
 )
@@ -584,7 +579,6 @@ class YoutubeDL:
         self._ies = {}
         self._ies_instances = {}
         self._pps = {k: [] for k in POSTPROCESS_WHEN}
-        self._printed_messages = set()
         self._first_webpage_request = True
         self._post_hooks = []
         self._progress_hooks = []
@@ -595,40 +589,9 @@ class YoutubeDL:
         self._playlist_level = 0
         self._playlist_urls = set()
         self.cache = Cache(self)
-
-        stdout = sys.stderr if self.params.get('logtostderr') else sys.stdout
-        self._out_files = Namespace(
-            out=stdout,
-            error=sys.stderr,
-            screen=sys.stderr if self.params.get('quiet') else stdout,
-            console=None if compat_os_name == 'nt' else next(
-                filter(supports_terminal_sequences, (sys.stderr, sys.stdout)), None)
-        )
-
-        try:
-            windows_enable_vt_mode()
-        except Exception as e:
-            self.write_debug(f'Failed to enable VT mode: {e}')
-
-        if self.params.get('no_color'):
-            if self.params.get('color') is not None:
-                self.report_warning('Overwriting params from "color" with "no_color"')
-            self.params['color'] = 'no_color'
-
-        term_allow_color = os.environ.get('TERM', '').lower() != 'dumb'
-
-        def process_color_policy(stream):
-            stream_name = {sys.stdout: 'stdout', sys.stderr: 'stderr'}[stream]
-            policy = traverse_obj(self.params, ('color', (stream_name, None), {str}), get_all=False)
-            if policy in ('auto', None):
-                return term_allow_color and supports_terminal_sequences(stream)
-            assert policy in ('always', 'never', 'no_color')
-            return {'always': True, 'never': False}.get(policy, policy)
-
-        self._allow_colors = Namespace(**{
-            name: process_color_policy(stream)
-            for name, stream in self._out_files.items_ if name != 'console'
-        })
+        self.logger = _Logger(self.params)
+        self._out_files = self.logger._out_files  # compat
+        self._allow_colors = self.logger._allow_colors  # compat
 
         # The code is left like this to be reused for future deprecations
         MIN_SUPPORTED, MIN_RECOMMENDED = (3, 7), (3, 7)
@@ -649,25 +612,23 @@ class YoutubeDL:
                 '         If you experience any issues while using this option, '
                 f'{self._format_err("DO NOT", self.Styles.ERROR)} open a bug report')
 
-        if self.params.get('bidi_workaround', False):
+        if self.params.get('bidi_workaround'):
+            from .. import _IN_CLI
+
+            name = '--bidi-workaround' if _IN_CLI else 'bidi_workaround parameter'
             try:
-                import pty
-                master, slave = pty.openpty()
-                width = shutil.get_terminal_size().columns
-                width_args = [] if width is None else ['-w', str(width)]
-                sp_kwargs = {'stdin': subprocess.PIPE, 'stdout': slave, 'stderr': self._out_files.error}
-                try:
-                    self._output_process = Popen(['bidiv'] + width_args, **sp_kwargs)
-                except OSError:
-                    self._output_process = Popen(['fribidi', '-c', 'UTF-8'] + width_args, **sp_kwargs)
-                self._output_channel = os.fdopen(master, 'rb')
+                self.logger.init_bidi_workaround()
+
             except OSError as ose:
-                if ose.errno == errno.ENOENT:
-                    self.report_warning(
-                        'Could not find fribidi executable, ignoring --bidi-workaround. '
-                        'Make sure that  fribidi  is an executable file in one of the directories in your $PATH.')
-                else:
+                if ose.errno != errno.ENOENT:
                     raise
+
+                self.logger.warning(
+                    f'Could not find any bidi executable, ignoring {name}. '
+                    'Make sure that either bidiv or fribidi are available as executables in your $PATH.')
+
+            except ImportError:
+                self.logger.warning(f'Could not import pty (perhaps not on *nix?), ignoring {name}.')
 
         self.params['compat_opts'] = set(self.params.get('compat_opts', ()))
         if auto_init and auto_init != 'no_verbose_header':
@@ -856,54 +817,20 @@ class YoutubeDL:
             for pp in pps:
                 pp.add_progress_hook(ph)
 
-    def _bidi_workaround(self, message):
-        if not hasattr(self, '_output_channel'):
-            return message
-
-        assert hasattr(self, '_output_process')
-        assert isinstance(message, str)
-        line_count = message.count('\n') + 1
-        self._output_process.stdin.write((message + '\n').encode())
-        self._output_process.stdin.flush()
-        res = ''.join(self._output_channel.readline().decode()
-                      for _ in range(line_count))
-        return res[:-len('\n')]
-
     def _write_string(self, message, out=None, only_once=False):
-        if only_once:
-            if message in self._printed_messages:
-                return
-            self._printed_messages.add(message)
-        write_string(message, out=out, encoding=self.params.get('encoding'))
+        self.logger._log(out, message, once=only_once)
 
-    def to_stdout(self, message, skip_eol=False, quiet=None):
+    def to_stdout(self, message):
         """Print message to stdout"""
-        if quiet is not None:
-            self.deprecation_warning('"YoutubeDL.to_stdout" no longer accepts the argument quiet. '
-                                     'Use "YoutubeDL.to_screen" instead')
-        if skip_eol is not False:
-            self.deprecation_warning('"YoutubeDL.to_stdout" no longer accepts the argument skip_eol. '
-                                     'Use "YoutubeDL.to_screen" instead')
-        self._write_string(f'{self._bidi_workaround(message)}\n', self._out_files.out)
+        self.logger.stdout(message)
 
     def to_screen(self, message, skip_eol=False, quiet=None, only_once=False):
         """Print message to screen if not in quiet mode"""
-        if self.params.get('logger'):
-            self.params['logger'].debug(message)
-            return
-        if (self.params.get('quiet') if quiet is None else quiet) and not self.params.get('verbose'):
-            return
-        self._write_string(
-            '%s%s' % (self._bidi_workaround(message), ('' if skip_eol else '\n')),
-            self._out_files.screen, only_once=only_once)
+        self.logger.info(message, newline=not skip_eol, quiet=quiet, once=only_once)
 
     def to_stderr(self, message, only_once=False):
         """Print message to stderr"""
-        assert isinstance(message, str)
-        if self.params.get('logger'):
-            self.params['logger'].error(message)
-        else:
-            self._write_string(f'{self._bidi_workaround(message)}\n', self._out_files.error, only_once=only_once)
+        self.logger.stderr(message, once=only_once)
 
     def _send_console_code(self, code):
         if compat_os_name == 'nt' or not self._out_files.console:
@@ -942,7 +869,7 @@ class YoutubeDL:
         if self.params.get('cookiefile') is not None:
             self.cookiejar.save(ignore_discard=True, ignore_expires=True)
 
-    def trouble(self, message=None, tb=None, is_error=True):
+    def trouble(self, message=None, *, tb=None, is_error=True):
         """Determine action to take when a download problem appears.
 
         Depending on if the downloader has been configured to ignore
@@ -952,98 +879,47 @@ class YoutubeDL:
         @param tb          If given, is additional traceback information
         @param is_error    Whether to raise error according to ignorerrors
         """
-        if message is not None:
-            self.to_stderr(message)
-        if self.params.get('verbose'):
-            if tb is None:
-                if sys.exc_info()[0]:  # if .trouble has been called from an except block
-                    tb = ''
-                    if hasattr(sys.exc_info()[1], 'exc_info') and sys.exc_info()[1].exc_info[0]:
-                        tb += ''.join(traceback.format_exception(*sys.exc_info()[1].exc_info))
-                    tb += encode_compat_str(traceback.format_exc())
-                else:
-                    tb_data = traceback.format_list(traceback.extract_stack())
-                    tb = ''.join(tb_data)
-            if tb:
-                self.to_stderr(tb)
-        if not is_error:
-            return
-        if not self.params.get('ignoreerrors'):
-            if sys.exc_info()[0] and hasattr(sys.exc_info()[1], 'exc_info') and sys.exc_info()[1].exc_info[0]:
-                exc_info = sys.exc_info()[1].exc_info
-            else:
-                exc_info = sys.exc_info()
-            raise DownloadError(message, exc_info)
-        self._download_retcode = 1
+        result = self.logger.error(message, tb=tb, is_error=is_error, prefix=False)
+        if result is not None:
+            self._download_retcode = result
 
-    Styles = Namespace(
-        HEADERS='yellow',
-        EMPHASIS='light blue',
-        FILENAME='green',
-        ID='green',
-        DELIM='blue',
-        ERROR='red',
-        WARNING='yellow',
-        SUPPRESS='light black',
-    )
+    Styles = _Styles
 
     def _format_text(self, handle, allow_colors, text, f, fallback=None, *, test_encoding=False):
-        text = str(text)
-        if test_encoding:
-            original_text = text
-            # handle.encoding can be None. See https://github.com/yt-dlp/yt-dlp/issues/2711
-            encoding = self.params.get('encoding') or getattr(handle, 'encoding', None) or 'ascii'
-            text = text.encode(encoding, 'ignore').decode(encoding)
-            if fallback is not None and text != original_text:
-                text = fallback
-        return format_text(text, f) if allow_colors is True else text if fallback is None else fallback
+        return self.logger._format_text(handle, allow_colors, text, f, fallback, test_encoding=test_encoding)
 
     def _format_out(self, *args, **kwargs):
-        return self._format_text(self._out_files.out, self._allow_colors.out, *args, **kwargs)
+        return self.logger._format_out(*args, **kwargs)
 
     def _format_screen(self, *args, **kwargs):
-        return self._format_text(self._out_files.screen, self._allow_colors.screen, *args, **kwargs)
+        return self.logger._format_screen(*args, **kwargs)
 
     def _format_err(self, *args, **kwargs):
-        return self._format_text(self._out_files.error, self._allow_colors.error, *args, **kwargs)
+        return self.logger._format_err(*args, **kwargs)
 
     def report_warning(self, message, only_once=False):
         '''
         Print the message to stderr, it will be prefixed with 'WARNING:'
         If stderr is a tty file the 'WARNING:' will be colored
         '''
-        if self.params.get('logger') is not None:
-            self.params['logger'].warning(message)
-        else:
-            if self.params.get('no_warnings'):
-                return
-            self.to_stderr(f'{self._format_err("WARNING:", self.Styles.WARNING)} {message}', only_once)
+        self.logger.warning(message, only_once)
 
     def deprecation_warning(self, message, *, stacklevel=0):
-        deprecation_warning(
-            message, stacklevel=stacklevel + 1, printer=self.report_error, is_error=False)
+        self.logger.deprecation_warning(message, stacklevel=stacklevel + 1)
 
     def deprecated_feature(self, message):
-        if self.params.get('logger') is not None:
-            self.params['logger'].warning(f'Deprecated Feature: {message}')
-        self.to_stderr(f'{self._format_err("Deprecated Feature:", self.Styles.ERROR)} {message}', True)
+        self.logger.deprecated_feature(message)
 
-    def report_error(self, message, *args, **kwargs):
+    def report_error(self, message, tb=None, is_error=True):
         '''
         Do the same as trouble, but prefixes the message with 'ERROR:', colored
         in red if stderr is a tty file.
         '''
-        self.trouble(f'{self._format_err("ERROR:", self.Styles.ERROR)} {message}', *args, **kwargs)
+        self.logger.error(message, tb=tb, is_error=is_error, prefix=True)
 
     def write_debug(self, message, only_once=False):
         '''Log debug message or Print message to stderr'''
-        if not self.params.get('verbose', False):
-            return
-        message = f'[debug] {message}'
-        if self.params.get('logger'):
-            self.params['logger'].debug(message)
-        else:
-            self.to_stderr(message, only_once)
+        self.logger.debug(message, once=only_once)
 
     def report_file_already_downloaded(self, file_name):
         """Report file has already been fully downloaded."""
