@@ -30,6 +30,7 @@ from .downloader.rtmp import rtmpdump_version
 from .extractor import gen_extractor_classes, get_info_extractor
 from .extractor.common import UnsupportedURLIE
 from .extractor.openload import PhantomJSwrapper
+from .output.helper import _wrap_download_retcode, redirect_warnings
 from .output.logger import _Logger, _Styles
 from .plugins import directories as plugin_directories
 from .postprocessor import _PLUGIN_CLASSES as plugin_pps
@@ -589,7 +590,10 @@ class YoutubeDL:
         self._playlist_level = 0
         self._playlist_urls = set()
         self.cache = Cache(self)
+
         self.logger = _Logger(self.params)
+        redirect_warnings(self.logger)
+        _wrap_download_retcode(self, self.logger)
         self._out_files = self.logger._out_files  # compat
         self._allow_colors = self.logger._allow_colors  # compat
 
@@ -613,7 +617,7 @@ class YoutubeDL:
                 f'{self._format_err("DO NOT", self.Styles.ERROR)} open a bug report')
 
         if self.params.get('bidi_workaround'):
-            from .. import _IN_CLI
+            from . import _IN_CLI
 
             name = '--bidi-workaround' if _IN_CLI else 'bidi_workaround parameter'
             try:
@@ -818,7 +822,7 @@ class YoutubeDL:
                 pp.add_progress_hook(ph)
 
     def _write_string(self, message, out=None, only_once=False):
-        self.logger._log(out, message, once=only_once)
+        self.logger._log(out, message, once=only_once, newline=False)
 
     def to_stdout(self, message):
         """Print message to stdout"""
@@ -879,9 +883,7 @@ class YoutubeDL:
         @param tb          If given, is additional traceback information
         @param is_error    Whether to raise error according to ignorerrors
         """
-        result = self.logger.error(message, tb=tb, is_error=is_error, prefix=False)
-        if result is not None:
-            self._download_retcode = result
+        self.logger.error(message, tb=tb, is_error=is_error, prefix=False)
 
     Styles = _Styles
 

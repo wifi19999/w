@@ -6,6 +6,7 @@ import traceback
 
 from ..minicurses import format_text
 from ..utils import (
+    DownloadError,
     Namespace,
     Popen,
     compat_os_name,
@@ -14,7 +15,6 @@ from ..utils import (
     variadic,
     windows_enable_vt_mode,
     write_string,
-    DownloadError
 )
 from ..utils.traversal import traverse_obj
 
@@ -81,13 +81,13 @@ class _Logger:
     def _log(self, output, message, *, newline=True, once=False, prefix=None):
         assert isinstance(message, str)
 
+        if prefix is not None:
+            message = ' '.join((*map(str, variadic(prefix)), message))
+
         if once:
             if message in self.message_cache:
                 return
             self.message_cache.add(message)
-
-        if prefix is not None:
-            message = ' '.join((*map(str, variadic(prefix)), message))
 
         if self._bidi_initialized:
             message = self._apply_bidi_workaround(message)
@@ -146,7 +146,9 @@ class _Logger:
             self._logger.warning(message)
 
         elif not self._no_warnings:
-            self.stderr(f'{self._format_err("WARNING:", _Styles.WARNING)} {message}', once=once)
+            self._log(
+                self._out_files.error, message, once=once,
+                prefix=self._format_err("WARNING:", _Styles.WARNING))
 
     def deprecation_warning(self, message, *, stacklevel=0):
         deprecation_warning(
@@ -156,7 +158,9 @@ class _Logger:
         if self._logger:
             self._logger.warning(f'Deprecated Feature: {message}')
             return
-        self.stderr(f'{self._format_err("Deprecated Feature:", _Styles.ERROR)} {message}', once=True)
+        self._log(
+            self._out_files.error, message, once=True,
+            prefix=self._format_err("Deprecated Feature:", _Styles.ERROR))
 
     def stderr(self, message, once=False):
         if self._logger:
@@ -166,14 +170,13 @@ class _Logger:
         self._log(self._out_files.error, message, once=once)
 
     def error(self, message, *, tb=None, is_error=True, prefix=True):
-        if prefix:
-            message = f'{self._format_err("ERROR:", _Styles.ERROR)} {message}'
-
         if message is not None:
-            self.stderr(message)
+            self._log(
+                self._out_files.error, message,
+                prefix=self._format_err("ERROR:", _Styles.ERROR) if prefix else None)
         if self._verbosity == 'verbose':
             if tb is None:
-                if sys.exc_info()[0]:  # if .trouble has been called from an except block
+                if sys.exc_info()[0]:  # called from an except block
                     tb = ''
                     if hasattr(sys.exc_info()[1], 'exc_info') and sys.exc_info()[1].exc_info[0]:
                         tb += ''.join(traceback.format_exception(*sys.exc_info()[1].exc_info))
@@ -182,7 +185,7 @@ class _Logger:
                     tb_data = traceback.format_list(traceback.extract_stack())
                     tb = ''.join(tb_data)
             if tb:
-                self.stderr(tb)
+                self._log(self._out_files.error, tb)
         if not is_error:
             return
         if not self._ignoreerrors:
