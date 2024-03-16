@@ -3560,14 +3560,9 @@ class YoutubeDL:
 
         return self._download_retcode
 
-    def download_with_info_file(self, info_filename):
-        with contextlib.closing(fileinput.FileInput(
-                [info_filename], mode='r',
-                openhook=fileinput.hook_encoded('utf-8'))) as f:
-            # FileInput doesn't have a read method, we can't call json.load
-            infos = [self.sanitize_info(info, self.params.get('clean_infojson', True))
-                     for info in variadic(json.loads('\n'.join(f)))]
-        for info in infos:
+    def download_with_info(self, info_list):
+        """Download using already extracted info_dicts."""
+        for info in info_list:
             try:
                 self.__download_wrapper(self.process_ie_result)(info, download=True)
             except (DownloadError, EntryNotInPlaylist, ReExtractInfo) as e:
@@ -3581,6 +3576,16 @@ class YoutubeDL:
             except ExtractorError as e:
                 self.report_error(e)
         return self._download_retcode
+
+    def download_with_info_file(self, info_filename):
+        """Download using an info file."""
+        with contextlib.closing(fileinput.FileInput(
+                [info_filename], mode='r',
+                openhook=fileinput.hook_encoded('utf-8'))) as f:
+            # FileInput doesn't have a read method, we can't call json.load
+            infos = [self.sanitize_info(info, self.params.get('clean_infojson', True))
+                     for info in variadic(json.loads('\n'.join(f)))]
+        return self.download_with_info(infos)
 
     @staticmethod
     def sanitize_info(info_dict, remove_private_keys=False):
