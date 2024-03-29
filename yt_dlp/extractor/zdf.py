@@ -14,6 +14,7 @@ from ..utils import (
     parse_codecs,
     qualities,
     traverse_obj,
+    try_call,
     try_get,
     unified_timestamp,
     update_url_query,
@@ -312,13 +313,20 @@ class ZDFIE(ZDFBaseIE):
             'duration': int_or_none(t.get('duration')),
             'timestamp': unified_timestamp(content.get('editorialDate')),
             'thumbnails': thumbnails,
-            'chapters': chapters or None
+            'chapters': chapters or None,
+            'season': 'test'
         })
 
     def _extract_regular(self, url, player, video_id):
-        content = self._call_api(
-            player['content'], video_id, 'content', player['apiToken'], url)
-        return self._extract_entry(player['content'], player, content, video_id)
+        player_content_v2 = player['content']
+        player_content_v3 = update_url_query(player_content_v2, {'profile': 'player-3'})
+
+        content = try_call(
+            lambda: self._call_api(player_content_v3, video_id, 'content', player['apiToken'], url),
+            lambda: self._call_api(player_content_v2, video_id, 'content', player['apiToken'], url),
+        )
+
+        return self._extract_entry(player_content_v2, player, content, video_id)
 
     def _extract_mobile(self, video_id):
         video = self._download_json(
