@@ -331,6 +331,7 @@ from .caracoltv import CaracolTvPlayIE
 from .cartoonnetwork import CartoonNetworkIE
 from .cbc import (
     CBCIE,
+    CBCGemEpisodeIE,
     CBCGemIE,
     CBCGemLiveIE,
     CBCGemPlaylistIE,
