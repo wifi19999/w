@@ -1356,9 +1356,6 @@ class YoutubeDL:
             elif fmt[-1] == 'q':  # quoted
                 value = map(str, variadic(value) if '#' in flags else [value])
                 value, fmt = shell_quote(value, shell=True), str_fmt
-            elif fmt[-1] == 'B':  # bytes
-                value = f'%{str_fmt}'.encode() % str(value).encode()
-                value, fmt = value.decode('utf-8', 'ignore'), 's'
             elif fmt[-1] == 'U':  # unicode normalized
                 value, fmt = unicodedata.normalize(
                     # "+" = compatibility equivalence, "#" = NFD
@@ -1375,7 +1372,7 @@ class YoutubeDL:
                     value = str(value)[0]
                 else:
                     fmt = str_fmt
-            elif fmt[-1] not in 'rsa':  # numeric
+            elif fmt[-1] not in 'rsaB':  # numeric
                 value = float_or_none(value)
                 if value is None:
                     value, fmt = default, 's'
@@ -1387,8 +1384,12 @@ class YoutubeDL:
                     value, fmt = repr(value), str_fmt
                 elif fmt[-1] == 'a':
                     value, fmt = ascii(value), str_fmt
-                if fmt[-1] in 'csra':
+                if fmt[-1] in 'csraB':
                     value = sanitizer(last_field, value)
+
+            if fmt[-1] == 'B':  # bytes
+                value = f'%{str_fmt}'.encode() % str(value).encode()
+                value, fmt = value.decode('utf-8', 'ignore'), 's'
 
             key = '%s\0%s' % (key.replace('%', '%\0'), outer_mobj.group('format'))
             TMPL_DICT[key] = value
