@@ -1,6 +1,6 @@
 import sys
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 
 def pycryptodome_module():
@@ -32,3 +32,5 @@ hiddenimports = list(get_hidden_imports())
 print(f'Adding imports: {hiddenimports}')
 
 excludedimports = ['youtube_dl', 'youtube_dlc', 'test', 'ytdlp_plugins', 'devscripts', 'bundle']
+
+datas = collect_data_files('curl_cffi', includes=['cacert.pem'])
