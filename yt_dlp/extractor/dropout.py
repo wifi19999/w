@@ -120,7 +120,7 @@ class DropoutIE(DropoutBaseIE):
                 'duration': 1180,
                 'uploader_id': 'user80538407',
                 'uploader_url': 'https://vimeo.com/user80538407',
-                'uploader': 'OTT Videos'
+                'uploader': 'OTT Videos',
             },
             'expected_warnings': ['Ignoring subtitle tracks found in the HLS manifest'],
         },
@@ -143,7 +143,7 @@ class DropoutIE(DropoutBaseIE):
                 'duration': 135,
                 'uploader_id': 'user80538407',
                 'uploader_url': 'https://vimeo.com/user80538407',
-                'uploader': 'OTT Videos'
+                'uploader': 'OTT Videos',
             },
             'expected_warnings': ['Ignoring subtitle tracks found in the HLS manifest'],
         },
@@ -162,7 +162,7 @@ class DropoutIE(DropoutBaseIE):
                 'duration': 11698,
                 'uploader_id': 'user80538407',
                 'uploader_url': 'https://vimeo.com/user80538407',
-                'uploader': 'OTT Videos'
+                'uploader': 'OTT Videos',
             },
             'expected_warnings': ['Ignoring subtitle tracks found in the HLS manifest'],
         },
